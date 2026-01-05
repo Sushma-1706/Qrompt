@@ -75,9 +75,9 @@ Qrompt/
    git clone https://github.com/<your-username>/Qrompt.git
    ```
 2. Open Chrome and navigate to:
-```bash
-chrome://extensions
-```
+   ```bash
+   chrome://extensions
+   ```
 3. Enable Developer Mode
 4. Click Load unpacked
 5. Select the Qrompt directory
