@@ -81,24 +81,48 @@
     } catch (e) { return null; }
   }
 
-  // --- 📅 DATE PARSING (FIXED) ---
-  function getChatDate(chat) {
-    if (!chat.create_time) return null;
-    
-    // FIX: Check if it's a number (Unix timestamp) or String (ISO)
-    if (typeof chat.create_time === 'number') {
-        return new Date(chat.create_time * 1000);
-    } else {
-        // It is an ISO string "2026-01-05T..."
-        return new Date(chat.create_time);
+  // --- 📅 DATE PARSING ---
+  function parseChatTimestamp(rawDate) {
+    if (rawDate === null || rawDate === undefined) return null;
+
+    let date;
+    if (typeof rawDate === "number") {
+      date = new Date(rawDate < 1e12 ? rawDate * 1000 : rawDate);
+    } else if (typeof rawDate === "string") {
+      const numericDate = Number(rawDate);
+      if (Number.isFinite(numericDate) && rawDate.trim() !== "") {
+        date = new Date(numericDate < 1e12 ? numericDate * 1000 : numericDate);
+      } else {
+        date = new Date(rawDate);
+      }
     }
+
+    if (!date || Number.isNaN(date.getTime())) return null;
+    return date;
+  }
+
+  function getChatDate(chat) {
+    return parseChatTimestamp(chat?.create_time) || parseChatTimestamp(chat?.update_time);
+  }
+
+  function getChatDateCandidates(chat) {
+    const createDate = parseChatTimestamp(chat?.create_time);
+    const updateDate = parseChatTimestamp(chat?.update_time);
+
+    if (createDate && updateDate) {
+      return createDate.getTime() === updateDate.getTime() ? [createDate] : [createDate, updateDate];
+    }
+
+    if (createDate) return [createDate];
+    if (updateDate) return [updateDate];
+    return [];
   }
 
   async function handleDateSelect(e) {
-    const dateValue = e.target.value; 
+    const dateValue = e.target.value;
     if (!dateValue) return;
 
-    currentMode = "HISTORY"; 
+    currentMode = "HISTORY";
     clearBtn.style.display = "block";
     listContainer.innerHTML = `<div style="padding:10px; color:#888;">Searching chats...</div>`;
 
@@ -106,33 +130,76 @@
       const token = await getAccessToken();
       const headers = token ? { "Authorization": `Bearer ${token}` } : {};
 
-      const response = await fetch("https://chatgpt.com/backend-api/conversations?offset=0&limit=100&order=updated", { headers });
-      
-      if (!response.ok) throw new Error("API Error");
-      
-      const data = await response.json();
-      const chats = data.items || [];
-
-      // Filter Logic
-      const matches = chats.filter(chat => {
-        const chatDate = getChatDate(chat);
-        if (!chatDate) return false;
-
-        // Compare using local time components
-        const year = chatDate.getFullYear();
-        const month = String(chatDate.getMonth() + 1).padStart(2, '0');
-        const day = String(chatDate.getDate()).padStart(2, '0');
-        const localDateString = `${year}-${month}-${day}`;
-
-        return localDateString === dateValue;
-      });
-
+      const matches = await fetchConversationsByDate(headers, dateValue);
       renderHistoryList(matches, dateValue);
-
     } catch (err) {
       listContainer.innerHTML = `<div style="padding:10px; color:#ff6b6b;">Error: ${err.message}</div>`;
       console.error(err);
     }
+  }
+
+  function toLocalDateString(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  async function fetchConversationsByDate(headers, dateValue) {
+    const matches = [];
+    const seenIds = new Set();
+    const limit = 100;
+    const maxPages = 200;
+    let offset = 0;
+    let page = 0;
+    let scanned = 0;
+    let found = 0;
+
+    while (page < maxPages) {
+      page += 1;
+      listContainer.innerHTML = `<div style="padding:10px; color:#888;">Searching chats... (${scanned} scanned, ${found} found)</div>`;
+
+      const response = await fetch(`https://chatgpt.com/backend-api/conversations?offset=${offset}&limit=${limit}&order=updated`, { headers });
+      if (!response.ok) throw new Error(`API Error (${response.status})`);
+
+      const data = await response.json();
+      const items = Array.isArray(data.items)
+        ? data.items
+        : (Array.isArray(data.conversations) ? data.conversations : []);
+
+      if (items.length === 0) break;
+
+      let addedThisPage = 0;
+
+      items.forEach((chat) => {
+        if (!chat?.id || seenIds.has(chat.id)) return;
+        seenIds.add(chat.id);
+        addedThisPage += 1;
+        scanned += 1;
+
+        const chatDates = getChatDateCandidates(chat);
+        if (chatDates.length === 0) return;
+
+        const isDateMatch = chatDates.some((date) => toLocalDateString(date) === dateValue);
+        if (isDateMatch) {
+          matches.push(chat);
+          found += 1;
+        }
+      });
+
+      const total = Number.isFinite(data.total) ? data.total : null;
+      const reachedTotal = total !== null && seenIds.size >= total;
+      const shortPage = items.length < limit;
+      const noForwardProgress = addedThisPage === 0;
+
+      if (reachedTotal || shortPage || noForwardProgress) {
+        break;
+      }
+
+      offset += limit;
+    }
+
+    return matches;
   }
 
   function renderHistoryList(matches, dateStr) {
