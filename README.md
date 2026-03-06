@@ -3,6 +3,7 @@
 
 Qrompt is a lightweight Chrome extension that improves productivity on ChatGPT by adding a smart sidebar for navigating user prompts in long conversations.
 
+*Live Link :* https://microsoftedge.microsoft.com/addons/detail/qrompt/ogkfgjohljpinkmcibpgcedajjanjmoe
 ---
 
 ## 📌 Features
